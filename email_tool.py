@@ -111,28 +111,6 @@ def zip_files(file_paths, zip_path):
             zf.write(fp, os.path.basename(fp))
 
 
-def refresh_pivot_tables(excel_path):
-    """
-    刷新 Excel 数据透视表（仅 Windows + 已安装 Excel 环境支持）
-    成功返回 True，失败返回 False
-    """
-    if not sys.platform.startswith("win"):
-        return False
-    try:
-        import win32com.client
-        excel = win32com.client.Dispatch("Excel.Application")
-        excel.Visible = False
-        wb = excel.Workbooks.Open(os.path.abspath(excel_path))
-        wb.RefreshAll()
-        excel.CalculateUntilAsyncQueriesDone()  # 等待刷新完成
-        wb.Save()
-        wb.Close()
-        excel.Quit()
-        return True
-    except Exception:
-        return False
-
-
 def read_email_data(excel_path):
     """
     读取 Excel：
@@ -348,7 +326,7 @@ class EmailToolApp:
         tk.Label(header, text="改单邮件批量发送工具",
                   font=("Microsoft YaHei UI", 16, "bold"),
                   fg=Theme.TEXT_PRIMARY, bg=Theme.BG_PAGE).pack(side="left")
-        tk.Label(header, text="v1.2",
+        tk.Label(header, text="v1.3",
                   font=("Microsoft YaHei UI", 9),
                   fg=Theme.TEXT_SECONDARY, bg=Theme.BG_PAGE).pack(side="left", padx=(8, 0))
 
@@ -562,25 +540,6 @@ class EmailToolApp:
             recipients   = self.recipients.get()
 
             os.makedirs(output_dir, exist_ok=True)
-
-            # ─── Step 0：刷新透视表 ───
-            self.log("正在刷新 Excel 数据透视表…")
-            refreshed = refresh_pivot_tables(excel_path)
-            if not refreshed:
-                self.log("❌ 无法刷新数据透视表！", "red")
-                self.log("   原因：当前环境不支持（需 Windows + Excel）", "red")
-                self.root.after(0, lambda: messagebox.showerror(
-                    "透视表刷新失败",
-                    "无法自动刷新 Excel 数据透视表。\n\n"
-                    "请确保：\n"
-                    "  1. 本机已安装 Microsoft Excel\n"
-                    "  2. Excel 文件中的透视表已手动刷新并保存\n\n"
-                    "请手动刷新透视表后重新执行。"
-                ))
-                self.status_label.config(text="  ❌ 透视表刷新失败，已停止")
-                return  # ← 停止执行
-
-            self.log("  ✅ 透视表刷新成功", "green")
 
             # ─── Step 1：读取 Excel ───
             email_data, order_batch = read_email_data(excel_path)
