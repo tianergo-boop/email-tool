@@ -1,0 +1,21 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - run: pip install pyinstaller pypdf openpyxl
+    - run: pyinstaller --onefile --windowed --name 改单邮件工具 email_tool.py
+    - uses: actions/upload-artifact@v4
+      with:
+        name: 改单邮件工具-EXE
+        path: dist/改单邮件工具.exe
