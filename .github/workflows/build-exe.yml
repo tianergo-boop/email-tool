@@ -8,14 +8,25 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
     - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-    - run: pip install pyinstaller pypdf openpyxl
-    - run: pyinstaller --onefile --windowed --name 改单邮件工具 email_tool.py
-    - uses: actions/upload-artifact@v4
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller pypdf openpyxl
+
+    - name: Build EXE
+      run: pyinstaller --onefile --windowed --name 邮件批量发送工具 email_tool.py
+
+    - name: Upload EXE
+      uses: actions/upload-artifact@v4
       with:
-        name: 改单邮件工具-EXE
-        path: dist/改单邮件工具.exe
+        name: 邮件批量发送工具-EXE
+        path: dist/邮件批量发送工具.exe
