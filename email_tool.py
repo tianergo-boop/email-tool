@@ -146,7 +146,12 @@ def read_email_data(excel_path):
 
 
 def send_email(smtp_server, smtp_port, username, password,
-               recipients, subject, body, attachments=None):
+               recipients, subject, body, attachments=None,
+               server=None):
+    """发送邮件。若传入已有的 server 对象则复用连接，否则新建连接。
+
+    返回 server 对象（保持连接），调用方负责在全部发送完毕后 quit。
+    """
     # 清洗凭证：去除首尾不可见字符（全角空格、BOM 等）
     if username:
         username = username.strip().strip('\ufeff').strip('\u200b')
@@ -174,24 +179,53 @@ def send_email(smtp_server, smtp_port, username, password,
             msg.attach(part)
 
     use_ssl = (str(smtp_port) == "465")
-    if use_ssl:
-        server = SMTP_SSL(smtp_server, int(smtp_port), timeout=30)
-    else:
-        server = SMTP(smtp_server, int(smtp_port), timeout=30)
-        server.starttls()
+
+    # 最多重试 3 次建立连接
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            if server is None:
+                if use_ssl:
+                    server = SMTP_SSL(smtp_server, int(smtp_port), timeout=30)
+                else:
+                    server = SMTP(smtp_server, int(smtp_port), timeout=30)
+                    server.starttls()
+
+            try:
+                server.login(username, password)
+            except UnicodeEncodeError as e:
+                raise Exception(
+                    "SMTP 登录失败：账号或授权码包含非英文字符。\n"
+                    "请检查设置中的邮箱账号和授权码是否为英文或数字，"
+                    "并确保没有多余的中文空格或不可见字符。"
+                ) from e
+            # login 成功即可跳出重试循环
+            break
+        except Exception as e:
+            if server is not None:
+                try:
+                    server.quit()
+                except Exception:
+                    pass
+                server = None
+            if attempt < max_retries:
+                import time
+                time.sleep(attempt * 2)  # 2s, 4s 递增等待
+            else:
+                raise Exception(f"SMTP 连接失败（重试 {max_retries} 次）：{e}") from e
 
     try:
-        server.login(username, password)
-    except UnicodeEncodeError as e:
-        raise Exception(
-            "SMTP 登录失败：账号或授权码包含非英文字符。\n"
-            "请检查设置中的邮箱账号和授权码是否为英文或数字，"
-            "并确保没有多余的中文空格或不可见字符。"
-        ) from e
+        rcpt_list = [r.strip() for r in recipients.split(";") if r.strip()]
+        server.sendmail(username, rcpt_list, msg.as_string())
+    except Exception as e:
+        # sendmail 失败时连接可能已断开，废弃此 server
+        try:
+            server.quit()
+        except Exception:
+            pass
+        raise Exception(f"邮件发送失败（Server not connected 或连接中断）：{e}") from e
 
-    rcpt_list = [r.strip() for r in recipients.split(";") if r.strip()]
-    server.sendmail(username, rcpt_list, msg.as_string())
-    server.quit()
+    return server
 
 
 def find_newest_file_by_keyword(search_dir, keyword):
@@ -490,7 +524,6 @@ class EmailToolApp:
         self.pages = {}
         self._build_order_email_page()
         self._build_shipping_notify_page()
-        self._build_allocation_page()
         self._build_settings_page()
 
         # 默认显示改单邮件页面
@@ -511,7 +544,7 @@ class EmailToolApp:
                  font=("Microsoft YaHei UI", 13, "bold"),
                  bg=Theme.SIDEBAR_BG, fg="#FFFFFF").pack(side="left", padx=(8, 0))
 
-        tk.Label(sb, text="v2.0",
+        tk.Label(sb, text="v2.2",
                  font=("Microsoft YaHei UI", 8),
                  bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_VERSION).pack(anchor="w", padx=20)
 
@@ -560,23 +593,23 @@ class EmailToolApp:
             w.bind("<Leave>", lambda e, f=btn_ship: f.configure(bg=Theme.SIDEBAR_BG) if self.current_page != "shipping_notify" else None)
         self.nav_buttons["shipping_notify"] = (btn_ship, self._nav_ship_indicator, self._nav_ship_label, self._nav_ship_inner)
 
-        # ── 配箱按钮 ──
-        btn_alloc = tk.Frame(sb, bg=Theme.SIDEBAR_BG, cursor="hand2")
-        btn_alloc.pack(fill="x", padx=8, pady=2)
-        btn_alloc.bind("<Button-1>", lambda e: self._switch_page("allocation"))
-        self._nav_alloc_indicator = tk.Frame(btn_alloc, bg=Theme.SIDEBAR_BG, width=3)
-        self._nav_alloc_indicator.pack(side="left", fill="y", pady=6)
-        self._nav_alloc_inner = tk.Frame(btn_alloc, bg=Theme.SIDEBAR_BG)
-        self._nav_alloc_inner.pack(side="left", fill="x", expand=True, padx=(8, 8), pady=8)
-        self._nav_alloc_label = tk.Label(self._nav_alloc_inner, text="📦  配箱工具",
-                                            font=("Microsoft YaHei UI", 10),
-                                            bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_TEXT_INACTIVE)
-        self._nav_alloc_label.pack(anchor="w")
-        for w in [btn_alloc, self._nav_alloc_inner, self._nav_alloc_label]:
-            w.bind("<Button-1>", lambda e: self._switch_page("allocation"))
-            w.bind("<Enter>", lambda e, f=btn_alloc: f.configure(bg=Theme.SIDEBAR_HOVER) if self.current_page != "allocation" else None)
-            w.bind("<Leave>", lambda e, f=btn_alloc: f.configure(bg=Theme.SIDEBAR_BG) if self.current_page != "allocation" else None)
-        self.nav_buttons["allocation"] = (btn_alloc, self._nav_alloc_indicator, self._nav_alloc_label, self._nav_alloc_inner)
+        # ── 配箱按钮（暂未启用，待优化后开放） ──
+        # btn_alloc = tk.Frame(sb, bg=Theme.SIDEBAR_BG, cursor="hand2")
+        # btn_alloc.pack(fill="x", padx=8, pady=2)
+        # btn_alloc.bind("<Button-1>", lambda e: self._switch_page("allocation"))
+        # self._nav_alloc_indicator = tk.Frame(btn_alloc, bg=Theme.SIDEBAR_BG, width=3)
+        # self._nav_alloc_indicator.pack(side="left", fill="y", pady=6)
+        # self._nav_alloc_inner = tk.Frame(btn_alloc, bg=Theme.SIDEBAR_BG)
+        # self._nav_alloc_inner.pack(side="left", fill="x", expand=True, padx=(8, 8), pady=8)
+        # self._nav_alloc_label = tk.Label(self._nav_alloc_inner, text="📦  配箱工具",
+        #                                     font=("Microsoft YaHei UI", 10),
+        #                                     bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_TEXT_INACTIVE)
+        # self._nav_alloc_label.pack(anchor="w")
+        # for w in [btn_alloc, self._nav_alloc_inner, self._nav_alloc_label]:
+        #     w.bind("<Button-1>", lambda e: self._switch_page("allocation"))
+        #     w.bind("<Enter>", lambda e, f=btn_alloc: f.configure(bg=Theme.SIDEBAR_HOVER) if self.current_page != "allocation" else None)
+        #     w.bind("<Leave>", lambda e, f=btn_alloc: f.configure(bg=Theme.SIDEBAR_BG) if self.current_page != "allocation" else None)
+        # self.nav_buttons["allocation"] = (btn_alloc, self._nav_alloc_indicator, self._nav_alloc_label, self._nav_alloc_inner)
 
         # 底部设置按钮
         tk.Frame(sb, bg=Theme.SIDEBAR_DIVIDER, height=1).pack(fill="x", padx=16, pady=(8, 8), side="bottom", before=None)
@@ -629,7 +662,7 @@ class EmailToolApp:
         elif page_name == "shipping_notify":
             self._refresh_ship_status()
         elif page_name == "allocation":
-            self._load_allocation_data()
+            pass  # 配箱功能暂未启用
 
     # ════════════════════════════════════════════════════════
     #  改单邮件页面
@@ -1926,8 +1959,9 @@ class EmailToolApp:
             self._log(log, f"正在拆分 PDF，共 {total} 个PO待处理…")
             pdf_map = split_pdf_by_order(pdf_path, output_dir)
 
-            # Step 3：逐订单处理
+            # Step 3：逐订单处理（复用同一 SMTP 连接）
             self.order_progress["maximum"] = total
+            smtp_conn = None  # 复用的 SMTP 连接
 
             for i, item in enumerate(email_data, 1):
                 order_no = item["订单号"]
@@ -1965,14 +1999,33 @@ class EmailToolApp:
                 if coa_ok and os.path.exists(zip_path):
                     attachments.append(zip_path)
 
-                # 发送
+                # 发送（复用连接，失败时自动重连重试）
+                max_send_retries = 2
+                for send_attempt in range(1, max_send_retries + 1):
+                    try:
+                        smtp_conn = send_email(
+                            smtp_server, smtp_port, username, password,
+                            recipients, subject, body, attachments,
+                            server=smtp_conn)
+                        coa_tag = "" if coa_ok else " ⚠️COA缺失"
+                        self._log(log, f"PO {order_no}（{page_count}页）✅{coa_tag}", "green")
+                        break  # 发送成功，跳出重试循环
+                    except Exception as e:
+                        # 连接已废弃，下次重试会新建连接
+                        smtp_conn = None
+                        if send_attempt < max_send_retries:
+                            self._log(log, f"PO {order_no}（{page_count}页）⚠️ 发送失败，正在重连重试…", "warn")
+                            import time
+                            time.sleep(2)
+                        else:
+                            self._log(log, f"PO {order_no}（{page_count}页）❌ 发送失败：{e}", "red")
+
+            # 关闭 SMTP 连接
+            if smtp_conn:
                 try:
-                    send_email(smtp_server, smtp_port, username, password,
-                               recipients, subject, body, attachments)
-                    coa_tag = "" if coa_ok else " ⚠️COA缺失"
-                    self._log(log, f"PO {order_no}（{page_count}页）✅{coa_tag}", "green")
-                except Exception as e:
-                    self._log(log, f"PO {order_no}（{page_count}页）❌ 发送失败：{e}", "red")
+                    smtp_conn.quit()
+                except Exception:
+                    pass
 
             self.order_progress_label.config(text=f"{total}/{total}")
 
@@ -2090,8 +2143,12 @@ class EmailToolApp:
             self.ship_progress["value"] = 50
             self.ship_progress_label.config(text="发送中…")
 
-            send_email(smtp_server, smtp_port, username, password,
-                       recipients, subject, body, [found_file])
+            smtp_conn = send_email(smtp_server, smtp_port, username, password,
+                                   recipients, subject, body, [found_file])
+            try:
+                smtp_conn.quit()
+            except Exception:
+                pass
 
             self.ship_progress["value"] = 100
             self.ship_progress_label.config(text="完成")
