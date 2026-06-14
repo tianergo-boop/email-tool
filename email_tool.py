@@ -14,6 +14,7 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 from email.header import Header
+from email.utils import formataddr
 
 # PDF & Excel
 from pypdf import PdfReader, PdfWriter
@@ -146,9 +147,16 @@ def read_email_data(excel_path):
 
 def send_email(smtp_server, smtp_port, username, password,
                recipients, subject, body, attachments=None):
+    # 清洗凭证：去除首尾不可见字符（全角空格、BOM 等）
+    if username:
+        username = username.strip().strip('\ufeff').strip('\u200b')
+    if password:
+        password = password.strip().strip('\ufeff').strip('\u200b')
+
     msg = MIMEMultipart()
-    msg["From"] = username
-    msg["To"] = recipients
+    # From 头用 formataddr 编码，支持非 ASCII 显示名
+    msg["From"] = formataddr((username, username))
+    msg["To"]   = recipients
     msg["Subject"] = Header(subject, "utf-8")
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
@@ -167,12 +175,20 @@ def send_email(smtp_server, smtp_port, username, password,
 
     use_ssl = (str(smtp_port) == "465")
     if use_ssl:
-        server = SMTP_SSL(smtp_server, smtp_port, timeout=30)
+        server = SMTP_SSL(smtp_server, int(smtp_port), timeout=30)
     else:
-        server = SMTP(smtp_server, smtp_port, timeout=30)
+        server = SMTP(smtp_server, int(smtp_port), timeout=30)
         server.starttls()
 
-    server.login(username, password)
+    try:
+        server.login(username, password)
+    except UnicodeEncodeError as e:
+        raise Exception(
+            "SMTP 登录失败：账号或授权码包含非英文字符。\n"
+            "请检查设置中的邮箱账号和授权码是否为英文或数字，"
+            "并确保没有多余的中文空格或不可见字符。"
+        ) from e
+
     rcpt_list = [r.strip() for r in recipients.split(";") if r.strip()]
     server.sendmail(username, rcpt_list, msg.as_string())
     server.quit()
@@ -200,29 +216,74 @@ def find_newest_file_by_keyword(search_dir, keyword):
 # ══════════════════════════════════════════════════════════
 
 class Theme:
-    # 主色
-    PRIMARY        = "#2B5AED"
-    PRIMARY_HOVER = "#1E45C0"
-    # 语义色
-    SUCCESS  = "#52C41A"
-    WARNING  = "#FAAD14"
-    ERROR    = "#F5222D"
-    # 侧边栏
-    SIDEBAR_BG        = "#1E272E"
-    SIDEBAR_ACTIVE_BG = "#2B5AED"
-    SIDEBAR_TEXT      = "#B2BEC3"
-    SIDEBAR_ACTIVE    = "#FFFFFF"
-    SIDEBAR_HOVER     = "#2D3436"
-    SIDEBAR_DIVIDER   = "#34495E"
-    # 页面
-    BG_PAGE       = "#F5F7FA"
-    BG_CARD       = "#FFFFFF"
-    BG_INPUT      = "#F7F8FA"
-    BORDER        = "#E4E7ED"
-    TEXT_PRIMARY   = "#1D2129"
-    TEXT_SECONDARY = "#86909C"
-    TEXT_LABEL     = "#4E5969"
-    DIVIDER        = "#EBEBEB"
+    # ══════════════════════════════════════════════════════
+    #  主色（Google Material Design Blue）
+    # ══════════════════════════════════════════════════════
+    PRIMARY             = "#1a73e8"
+    PRIMARY_HOVER     = "#1765cc"
+    PRIMARY_ACTIVE     = "#1557b0"
+    PRIMARY_LIGHT     = "#e8f0fe"
+
+    # ══════════════════════════════════════════════════════
+    #  语义色
+    # ══════════════════════════════════════════════════════
+    SUCCESS            = "#0d8a4e"
+    SUCCESS_BG         = "#e6f4ea"
+    WARNING            = "#e8710a"
+    WARNING_BG         = "#fef7e0"
+    ERROR              = "#d93025"
+    ERROR_BG           = "#fce8e6"
+    INFO               = "#1a73e8"
+    INFO_BG            = "#e8f0fe"
+
+    # ══════════════════════════════════════════════════════
+    #  侧边栏（深色）
+    # ══════════════════════════════════════════════════════
+    SIDEBAR_BG             = "#1e1e2e"
+    SIDEBAR_TEXT_INACTIVE  = "#a0a0b8"
+    SIDEBAR_TEXT_ACTIVE    = "#ffffff"
+    SIDEBAR_ITEM_HOVER    = "#2a2a3e"
+    SIDEBAR_ITEM_ACTIVE    = "#2d2d4a"
+    SIDEBAR_ICON_INACTIVE = "#6c6c88"
+    SIDEBAR_ICON_ACTIVE   = "#6ea8fe"
+    SIDEBAR_VERSION        = "#4a4a5e"
+
+    # ══════════════════════════════════════════════════════
+    #  页面与表面
+    # ══════════════════════════════════════════════════════
+    BG_PAGE             = "#f8f9fa"
+    BG_CARD             = "#ffffff"
+    BG_SURFACE_HOVER   = "#f8f9fa"
+    BORDER              = "#e8eaed"
+    BORDER_HOVER       = "#c4c7cc"
+
+    # ══════════════════════════════════════════════════════
+    #  文字
+    # ══════════════════════════════════════════════════════
+    TEXT_PRIMARY        = "#202124"
+    TEXT_SECONDARY     = "#5f6368"
+    TEXT_PLACEHOLDER   = "#80868b"
+    TEXT_DISABLED       = "#80868b"
+
+    # ══════════════════════════════════════════════════════
+    #  输入框
+    # ══════════════════════════════════════════════════════
+    INPUT_BORDER          = "#dadce0"
+    INPUT_BORDER_FOCUS   = "#1a73e8"
+    INPUT_BORDER_HOVER   = "#c4c7cc"
+    INPUT_BG              = "#ffffff"
+    INPUT_BG_DISABLED    = "#f1f3f4"
+    # ════════════════════════════════════════════════════════
+    #  兼容旧属性名（代码迁移过渡期）
+    # ════════════════════════════════════════════════════════
+    BG_INPUT              = BG_CARD
+    TEXT_LABEL            = TEXT_PRIMARY
+    SIDEBAR_ACTIVE_BG   = SIDEBAR_ITEM_ACTIVE
+    SIDEBAR_TEXT         = SIDEBAR_TEXT_INACTIVE
+    SIDEBAR_ACTIVE       = SIDEBAR_TEXT_ACTIVE
+    SIDEBAR_HOVER       = SIDEBAR_ITEM_HOVER
+    SIDEBAR_DIVER      = BORDER
+
 
 
 # ══════════════════════════════════════════════════════════
@@ -232,8 +293,8 @@ class Theme:
 class EmailToolApp:
 
     WINDOW_W = 980
-    WINDOW_H = 720
-    SIDEBAR_W = 180
+    WINDOW_H = 700
+    SIDEBAR_W = 220
 
     def __init__(self, root):
         self.root = root
@@ -353,6 +414,7 @@ class EmailToolApp:
         style = ttk.Style()
         style.theme_use("clam")
 
+        # ── 卡片标题 ──
         style.configure("Card.TLabelframe",
                         background=Theme.BG_CARD,
                         bordercolor=Theme.BORDER,
@@ -360,40 +422,53 @@ class EmailToolApp:
         style.configure("Card.TLabelframe.Label",
                         background=Theme.BG_CARD,
                         foreground=Theme.TEXT_PRIMARY,
-                        font=("Microsoft YaHei UI", 10, "bold"),
-                        padding=(12, 6))
+                        font=("Microsoft YaHei UI", 11, "bold"),
+                        padding=(16, 6, 16, 4))
 
+        # ── 输入框 ──
         style.configure("Input.TEntry",
-                        fieldbackground=Theme.BG_INPUT,
-                        bordercolor=Theme.BORDER,
-                        focuscolor=Theme.PRIMARY,
-                        padding=(8, 6))
+                        fieldbackground=Theme.INPUT_BG,
+                        bordercolor=Theme.INPUT_BORDER,
+                        focuscolor=Theme.INPUT_BORDER_FOCUS,
+                        padding=(8, 6),
+                        font=("Microsoft YaHei UI", 10))
 
+        # ── 主按钮（Primary）──
         style.configure("Primary.TButton",
                         background=Theme.PRIMARY,
                         foreground="white",
-                        font=("Microsoft YaHei UI", 11, "bold"),
-                        padding=(28, 10), borderwidth=0)
+                        font=("Microsoft YaHei UI", 10, "bold"),
+                        padding=(24, 10), borderwidth=0)
         style.map("Primary.TButton",
-                  background=[("active", "#1E45C0"), ("pressed", "#1635A1")])
+                  background=[("active", Theme.PRIMARY_HOVER),
+                             ("pressed", Theme.PRIMARY_ACTIVE)],
+                  relief=[("pressed", "sunken")])
 
+        # ── 次按钮（Secondary）──
         style.configure("Secondary.TButton",
-                        background=Theme.BG_INPUT,
-                        foreground=Theme.TEXT_PRIMARY,
+                        background=Theme.BG_CARD,
+                        foreground=Theme.PRIMARY,
                         font=("Microsoft YaHei UI", 9),
-                        padding=(12, 5), borderwidth=1,
-                        bordercolor=Theme.BORDER)
+                        padding=(14, 6), borderwidth=1,
+                        bordercolor=Theme.PRIMARY)
         style.map("Secondary.TButton",
-                  background=[("active", "#E8E8E8")])
+                  background=[("active", Theme.PRIMARY_LIGHT)],
+                  foreground=[("active", Theme.PRIMARY_HOVER)],
+                  bordercolor=[("active", Theme.PRIMARY_HOVER)])
 
+        # ── 进度条 ──
         style.configure("Horizontal.TProgressbar",
-                        troughcolor=Theme.BG_INPUT,
+                        troughcolor=Theme.BORDER,
                         background=Theme.PRIMARY,
                         borderwidth=0, thickness=6)
 
+        # ── 复选框 ──
         style.configure("TCheckbutton",
                         background=Theme.BG_CARD,
-                        font=("Microsoft YaHei UI", 9))
+                        font=("Microsoft YaHei UI", 9),
+                        foreground=Theme.TEXT_PRIMARY)
+        style.map("TCheckbutton",
+                  background=[("active", Theme.BG_CARD)])
 
     # ════════════════════════════════════════════════════════
     #  主界面搭建
@@ -437,15 +512,15 @@ class EmailToolApp:
 
         tk.Label(sb, text="v2.0",
                  font=("Microsoft YaHei UI", 8),
-                 bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_TEXT).pack(anchor="w", padx=20)
+                 bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_VERSION).pack(anchor="w", padx=20)
 
         # 分割线
-        tk.Frame(sb, bg=Theme.SIDEBAR_DIVIDER, height=1).pack(fill="x", padx=16, pady=(16, 8))
+        tk.Frame(sb, bg=Theme.BORDER, height=1).pack(fill="x", padx=16, pady=(16, 8))
 
         # 导航标题
-        tk.Label(sb, text="功 能",
+        tk.Label(sb, text="功  能",
                  font=("Microsoft YaHei UI", 9),
-                 bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_TEXT).pack(anchor="w", padx=20, pady=(4, 4))
+                 bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_TEXT_INACTIVE).pack(anchor="w", padx=20, pady=(4, 6))
 
         # 导航按钮
         self.nav_buttons = {}
@@ -459,7 +534,7 @@ class EmailToolApp:
         self._nav_order_inner.pack(side="left", fill="x", expand=True, padx=(8, 8), pady=8)
         self._nav_order_label = tk.Label(self._nav_order_inner, text="📋  改单邮件",
                                           font=("Microsoft YaHei UI", 10),
-                                          bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_TEXT)
+                                          bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_TEXT_INACTIVE)
         self._nav_order_label.pack(anchor="w")
         for w in [btn_order, self._nav_order_inner, self._nav_order_label]:
             w.bind("<Button-1>", lambda e: self._switch_page("order_email"))
@@ -476,7 +551,7 @@ class EmailToolApp:
         self._nav_ship_inner.pack(side="left", fill="x", expand=True, padx=(8, 8), pady=8)
         self._nav_ship_label = tk.Label(self._nav_ship_inner, text="🚚  发货通知",
                                           font=("Microsoft YaHei UI", 10),
-                                          bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_TEXT)
+                                          bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_TEXT_INACTIVE)
         self._nav_ship_label.pack(anchor="w")
         for w in [btn_ship, self._nav_ship_inner, self._nav_ship_label]:
             w.bind("<Button-1>", lambda e: self._switch_page("shipping_notify"))
