@@ -20,7 +20,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pyinstaller pypdf openpyxl
+        pip install pyinstaller pypdf openpyxl xlwings
 
     - name: Build EXE
       run: pyinstaller --onefile --windowed --name 邮件批量发送工具 --hidden-import=allocation_module email_tool.py
