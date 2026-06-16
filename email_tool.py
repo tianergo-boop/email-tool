@@ -524,6 +524,7 @@ class EmailToolApp:
         self.pages = {}
         self._build_order_email_page()
         self._build_shipping_notify_page()
+        self._build_allocation_page()
         self._build_settings_page()
 
         # 默认显示改单邮件页面
@@ -544,7 +545,7 @@ class EmailToolApp:
                  font=("Microsoft YaHei UI", 13, "bold"),
                  bg=Theme.SIDEBAR_BG, fg="#FFFFFF").pack(side="left", padx=(8, 0))
 
-        tk.Label(sb, text="v2.2",
+        tk.Label(sb, text="v3.0",
                  font=("Microsoft YaHei UI", 8),
                  bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_VERSION).pack(anchor="w", padx=20)
 
@@ -593,23 +594,22 @@ class EmailToolApp:
             w.bind("<Leave>", lambda e, f=btn_ship: f.configure(bg=Theme.SIDEBAR_BG) if self.current_page != "shipping_notify" else None)
         self.nav_buttons["shipping_notify"] = (btn_ship, self._nav_ship_indicator, self._nav_ship_label, self._nav_ship_inner)
 
-        # ── 配箱按钮（暂未启用，待优化后开放） ──
-        # btn_alloc = tk.Frame(sb, bg=Theme.SIDEBAR_BG, cursor="hand2")
-        # btn_alloc.pack(fill="x", padx=8, pady=2)
-        # btn_alloc.bind("<Button-1>", lambda e: self._switch_page("allocation"))
-        # self._nav_alloc_indicator = tk.Frame(btn_alloc, bg=Theme.SIDEBAR_BG, width=3)
-        # self._nav_alloc_indicator.pack(side="left", fill="y", pady=6)
-        # self._nav_alloc_inner = tk.Frame(btn_alloc, bg=Theme.SIDEBAR_BG)
-        # self._nav_alloc_inner.pack(side="left", fill="x", expand=True, padx=(8, 8), pady=8)
-        # self._nav_alloc_label = tk.Label(self._nav_alloc_inner, text="📦  配箱工具",
-        #                                     font=("Microsoft YaHei UI", 10),
-        #                                     bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_TEXT_INACTIVE)
-        # self._nav_alloc_label.pack(anchor="w")
-        # for w in [btn_alloc, self._nav_alloc_inner, self._nav_alloc_label]:
-        #     w.bind("<Button-1>", lambda e: self._switch_page("allocation"))
-        #     w.bind("<Enter>", lambda e, f=btn_alloc: f.configure(bg=Theme.SIDEBAR_HOVER) if self.current_page != "allocation" else None)
-        #     w.bind("<Leave>", lambda e, f=btn_alloc: f.configure(bg=Theme.SIDEBAR_BG) if self.current_page != "allocation" else None)
-        # self.nav_buttons["allocation"] = (btn_alloc, self._nav_alloc_indicator, self._nav_alloc_label, self._nav_alloc_inner)
+        btn_alloc = tk.Frame(sb, bg=Theme.SIDEBAR_BG, cursor="hand2")
+        btn_alloc.pack(fill="x", padx=8, pady=2)
+        btn_alloc.bind("<Button-1>", lambda e: self._switch_page("allocation"))
+        self._nav_alloc_indicator = tk.Frame(btn_alloc, bg=Theme.SIDEBAR_BG, width=3)
+        self._nav_alloc_indicator.pack(side="left", fill="y", pady=6)
+        self._nav_alloc_inner = tk.Frame(btn_alloc, bg=Theme.SIDEBAR_BG)
+        self._nav_alloc_inner.pack(side="left", fill="x", expand=True, padx=(8, 8), pady=8)
+        self._nav_alloc_label = tk.Label(self._nav_alloc_inner, text="📦  配箱工具",
+                                            font=("Microsoft YaHei UI", 10),
+                                            bg=Theme.SIDEBAR_BG, fg=Theme.SIDEBAR_TEXT_INACTIVE)
+        self._nav_alloc_label.pack(anchor="w")
+        for w in [btn_alloc, self._nav_alloc_inner, self._nav_alloc_label]:
+            w.bind("<Button-1>", lambda e: self._switch_page("allocation"))
+            w.bind("<Enter>", lambda e, f=btn_alloc: f.configure(bg=Theme.SIDEBAR_HOVER) if self.current_page != "allocation" else None)
+            w.bind("<Leave>", lambda e, f=btn_alloc: f.configure(bg=Theme.SIDEBAR_BG) if self.current_page != "allocation" else None)
+        self.nav_buttons["allocation"] = (btn_alloc, self._nav_alloc_indicator, self._nav_alloc_label, self._nav_alloc_inner)
 
         # 底部设置按钮
         tk.Frame(sb, bg=Theme.SIDEBAR_DIVIDER, height=1).pack(fill="x", padx=16, pady=(8, 8), side="bottom", before=None)
@@ -662,7 +662,7 @@ class EmailToolApp:
         elif page_name == "shipping_notify":
             self._refresh_ship_status()
         elif page_name == "allocation":
-            pass  # 配箱功能暂未启用
+            self._load_allocation_data()
 
     # ════════════════════════════════════════════════════════
     #  改单邮件页面
@@ -1105,261 +1105,411 @@ class EmailToolApp:
     # ════════════════════════════════════════════════════
 
     def _build_allocation_page(self):
-        """构建配箱工具页面"""
+        """构建配箱工具页面（v3.0 新版布局）"""
         page = tk.Frame(self.main_area, bg=Theme.BG_PAGE)
 
-        # 标题区
-        header = tk.Frame(page, bg=Theme.BG_PAGE)
-        header.pack(fill="x", padx=28, pady=(20, 12))
-        tk.Label(header, text="配箱工具",
-                 font=("Microsoft YaHei UI", 18, "bold"),
-                 fg=Theme.TEXT_PRIMARY, bg=Theme.BG_PAGE).pack(side="left")
-        tk.Label(header, text="导入订单 → 配箱 → 导出 → 发邮件",
-                 font=("Microsoft YaHei UI", 9),
-                 fg=Theme.TEXT_SECONDARY, bg=Theme.BG_PAGE).pack(side="left", padx=(12, 0), pady=(6, 0))
+        # ── 初始化状态变量 ──
+        self._alloc_state = "idle"          # idle | loading | done | error
+        self._alloc_asn_imported = False
+        self._alloc_orders = []
+        self._alloc_boxes = []
+        self._alloc_page = 0               # 当前页（0-indexed）
+        self._alloc_page_size = 100
+        self._alloc_filter = "全部"
+        self._alloc_new_rows = set()        # 新增行高亮
 
-        # 文件选择区
-        file_card = tk.Frame(page, bg=Theme.BG_CARD,
-                              highlightbackground=Theme.BORDER, highlightthickness=1)
-        file_card.pack(fill="x", padx=28, pady=(0, 12))
+        # ── 1. 文件选择区 ──
+        file_bar = tk.Frame(page, bg=Theme.BG_PAGE)
+        file_bar.pack(fill="x", padx=28, pady=(20, 8))
 
-        file_inner = tk.Frame(file_card, bg=Theme.BG_CARD)
-        file_inner.pack(fill="x", padx=20, pady=14)
+        self._alloc_file_label = tk.Label(file_bar, text="配箱表文件：未选择",
+                                           font=("Microsoft YaHei UI", 9),
+                                           fg=Theme.TEXT_SECONDARY, bg=Theme.BG_PAGE)
+        self._alloc_file_label.pack(side="left")
 
-        tk.Label(file_inner, text="配箱表文件：",
-                 font=("Microsoft YaHei UI", 9),
-                 bg=Theme.BG_CARD, fg=Theme.TEXT_PRIMARY).pack(side="left")
-
-        self.alloc_file_var = tk.StringVar()
-        entry = ttk.Entry(file_inner, textvariable=self.alloc_file_var,
-                          style="Input.TEntry", width=50)
-        entry.pack(side="left", padx=(8, 0))
-
-        def _select_alloc_file():
+        def _change_file():
             p = filedialog.askopenfilename(
                 title="选择配箱表",
                 filetypes=[("Excel 文件", "*.xlsm *.xlsx")])
             if p:
-                self.alloc_file_var.set(p)
+                self._alloc_file_var.set(p)
+                self._alloc_file_label.config(text=f"配箱表文件：{os.path.basename(p)}",
+                                               fg=Theme.TEXT_PRIMARY)
                 self._load_allocation_data()
 
-        ttk.Button(file_inner, text="浏览…", style="Secondary.TButton",
-                    command=_select_alloc_file).pack(side="left", padx=(8, 0))
-        ttk.Button(file_inner, text="🔄 刷新数据", style="Secondary.TButton",
-                    command=lambda: self._load_allocation_data()).pack(side="left", padx=(8, 0))
+        self._alloc_file_var = tk.StringVar()
+        tk.Label(file_bar, text="更换文件",
+                 font=("Microsoft YaHei UI", 9, "underline"),
+                 fg=Theme.PRIMARY, bg=Theme.BG_PAGE,
+                 cursor="hand2").pack(side="left", padx=(8, 0))
+        # 绑定点击
+        for w in file_bar.winfo_children():
+            if w.cget("text") == "更换文件":
+                w.bind("<Button-1>", lambda e: _change_file())
 
-        # 统计栏
-        stats_card = tk.Frame(page, bg=Theme.BG_CARD,
-                               highlightbackground=Theme.BORDER, highlightthickness=1)
-        stats_card.pack(fill="x", padx=28, pady=(0, 12))
-
-        self.alloc_stats_frame = tk.Frame(stats_card, bg=Theme.BG_CARD)
-        self.alloc_stats_frame.pack(fill="x", padx=20, pady=14)
-
-        self.alloc_stat_labels = {}
-        stats = [
-            ("pending",    "待配", Theme.WARNING),
-            ("allocated", "已配", Theme.SUCCESS),
-            ("assigned",  "指定", Theme.PRIMARY),
-            ("no_stock",  "无库存", Theme.ERROR),
-            ("boxes",     "可用箱", Theme.INFO),
-        ]
-        for key, label, color in stats:
-            lbl = tk.Label(self.alloc_stats_frame, text=f"● {label}：0",
-                           font=("Microsoft YaHei UI", 9, "bold"),
-                           fg=color, bg=Theme.BG_CARD)
-            lbl.pack(side="left", padx=(0, 20))
-            self.alloc_stat_labels[key] = lbl
-
-        # 工具栏
+        # ── 2. 工具栏 ──
         toolbar = tk.Frame(page, bg=Theme.BG_PAGE)
         toolbar.pack(fill="x", padx=28, pady=(0, 8))
 
-        ttk.Button(toolbar, text="📥 导入ERP订单", style="Secondary.TButton",
-                    command=self._alloc_import_erp).pack(side="left", padx=(0, 6))
-        ttk.Button(toolbar, text="📋 导入ASN", style="Secondary.TButton",
-                    command=self._alloc_import_asn).pack(side="left", padx=(0, 6))
-        ttk.Button(toolbar, text="📦 指定箱号", style="Secondary.TButton",
-                    command=self._alloc_assign_box).pack(side="left", padx=(0, 6))
-        ttk.Button(toolbar, text="📋 指定DI", style="Secondary.TButton",
-                    command=self._alloc_assign_di).pack(side="left", padx=(0, 6))
-        ttk.Button(toolbar, text="🗑️ 清除指定", style="Secondary.TButton",
-                    command=self._alloc_clear_assign).pack(side="left", padx=(0, 6))
-        ttk.Button(toolbar, text="📤 导出配箱清单", style="Primary.TButton",
-                    command=self._alloc_export).pack(side="left", padx=(20, 6))
-        ttk.Button(toolbar, text="📧 一键发邮件", style="Primary.TButton",
-                    command=self._alloc_send_email).pack(side="left", padx=(6, 0))
+        self._btn_import_erp = ttk.Button(toolbar, text="导入ERP订单",
+                                           style="Secondary.TButton",
+                                           command=self._alloc_import_erp)
+        self._btn_import_erp.pack(side="left", padx=(0, 6))
 
-        # 表格区
+        self._btn_import_asn = ttk.Button(toolbar, text="导入ASN",
+                                           style="Secondary.TButton",
+                                           command=self._alloc_import_asn)
+        self._btn_import_asn.pack(side="left", padx=(0, 6))
+
+        ttk.Label(toolbar, text="|", font=("Microsoft YaHei UI", 9),
+                  foreground=Theme.BORDER, background=Theme.BG_PAGE).pack(side="left", padx=(4, 4))
+
+        self._btn_assign_box = ttk.Button(toolbar, text="指定箱号",
+                                           style="Secondary.TButton",
+                                           command=self._alloc_assign_box)
+        self._btn_assign_box.pack(side="left", padx=(0, 6))
+
+        self._btn_assign_di = ttk.Button(toolbar, text="指定DI",
+                                          style="Secondary.TButton",
+                                          command=self._alloc_assign_di)
+        self._btn_assign_di.pack(side="left", padx=(0, 6))
+
+        self._btn_clear_assign = ttk.Button(toolbar, text="清除指定",
+                                              style="Secondary.TButton",
+                                              command=self._alloc_clear_assign)
+        self._btn_clear_assign.pack(side="left", padx=(0, 6))
+
+        # ── 3. 状态卡片 ──
+        self._alloc_status_card = tk.Frame(page, bg=Theme.BG_CARD,
+                                             highlightbackground=Theme.BORDER,
+                                             highlightthickness=1)
+        self._alloc_status_card.pack(fill="x", padx=28, pady=(0, 8))
+
+        self._alloc_status_inner = tk.Frame(self._alloc_status_card, bg=Theme.BG_CARD)
+        self._alloc_status_inner.pack(fill="x", padx=20, pady=14)
+
+        self._alloc_status_icon = tk.Label(self._alloc_status_inner, text="",
+                                            font=("Microsoft YaHei UI", 12),
+                                            bg=Theme.BG_CARD, fg=Theme.TEXT_SECONDARY)
+        self._alloc_status_icon.pack(side="left", padx=(0, 8))
+
+        self._alloc_status_text = tk.Label(self._alloc_status_inner, text="等待导入",
+                                             font=("Microsoft YaHei UI", 10),
+                                             bg=Theme.BG_CARD, fg=Theme.TEXT_SECONDARY)
+        self._alloc_status_text.pack(side="left")
+
+        self._alloc_status_progress = ttk.Progressbar(self._alloc_status_inner,
+                                                        mode="indeterminate",
+                                                        length=120,
+                                                        style="Horizontal.TProgressbar")
+        # 进度条默认隐藏，loading 时才显示
+
+        # ── 4. 进度步骤指示器 ──
+        step_frame = tk.Frame(page, bg=Theme.BG_PAGE)
+        step_frame.pack(fill="x", padx=28, pady=(0, 8))
+
+        self._step1_label = tk.Label(step_frame, text="① 配箱",
+                                      font=("Microsoft YaHei UI", 9),
+                                      fg=Theme.TEXT_PLACEHOLDER, bg=Theme.BG_PAGE)
+        self._step1_label.pack(side="left")
+
+        tk.Label(step_frame, text="  →  ", font=("Microsoft YaHei UI", 9),
+                 fg=Theme.BORDER, bg=Theme.BG_PAGE).pack(side="left")
+
+        self._step2_label = tk.Label(step_frame, text="② ASN导入",
+                                      font=("Microsoft YaHei UI", 9),
+                                      fg=Theme.TEXT_PLACEHOLDER, bg=Theme.BG_PAGE)
+        self._step2_label.pack(side="left")
+
+        # ── 5. 筛选栏 + 搜索 ──
+        filter_bar = tk.Frame(page, bg=Theme.BG_PAGE)
+        filter_bar.pack(fill="x", padx=28, pady=(0, 8))
+
+        self._alloc_filter_var = tk.StringVar(value="全部")
+        for ft in ["全部", "已配", "待配", "指定"]:
+            fg_color = Theme.PRIMARY if ft == "全部" else Theme.TEXT_SECONDARY
+            lbl = tk.Label(filter_bar, text=ft, font=("Microsoft YaHei UI", 9, "bold"),
+                           fg=fg_color, bg=Theme.BG_PAGE, cursor="hand2",
+                           padx=8, pady=2)
+            lbl.pack(side="left", padx=(0, 4))
+            lbl.bind("<Button-1>", lambda e, f=ft: self._set_alloc_filter(f))
+
+        ttk.Label(filter_bar, text="|", font=("Microsoft YaHei UI", 9),
+                  foreground=Theme.BORDER, background=Theme.BG_PAGE).pack(side="left", padx=(8, 8))
+
+        self._alloc_search_var = tk.StringVar()
+        search_entry = ttk.Entry(filter_bar, textvariable=self._alloc_search_var,
+                                  style="Input.TEntry", width=30)
+        search_entry.pack(side="left", padx=(0, 4))
+        search_entry.bind("<Return>", lambda e: self._refresh_alloc_tree())
+        search_entry.bind("<FocusOut>", lambda e: self._refresh_alloc_tree())
+
+        # ── 6. 订单表格 ──
         table_card = tk.Frame(page, bg=Theme.BG_CARD,
                               highlightbackground=Theme.BORDER, highlightthickness=1)
-        table_card.pack(fill="both", expand=True, padx=28, pady=(0, 16))
+        table_card.pack(fill="both", expand=True, padx=28, pady=(0, 4))
 
-        table_header = tk.Frame(table_card, bg=Theme.BG_CARD)
-        table_header.pack(fill="x", padx=16, pady=(10, 4))
-        tk.Label(table_header, text="配箱结果",
-                 font=("Microsoft YaHei UI", 10, "bold"),
-                 fg=Theme.TEXT_PRIMARY, bg=Theme.BG_CARD).pack(side="left")
-
-        # Treeview 表格
-        columns = ("order_no", "sales_org", "brand", "qty", "box_no", "di", "batch", "device", "status")
+        columns = ("check", "order_no", "brand", "qty", "box_no", "hub", "status")
         self.alloc_tree = ttk.Treeview(
-            table_card, columns=columns, show="headings", height=18,
+            table_card, columns=columns, show="headings", height=16,
             selectmode="extended"
         )
-        # 列标题
-        col_names = {
-            "order_no":  "客户订单号",
-            "sales_org": "销售组织",
-            "brand":     "牌号",
-            "qty":       "数量",
-            "box_no":    "箱号",
-            "di":        "DI",
-            "batch":     "批次",
-            "device":    "装置",
-            "status":    "状态",
-        }
-        col_widths = {
-            "order_no":  100,
-            "sales_org": 80,
-            "brand":     160,
-            "qty":       50,
-            "box_no":    100,
-            "di":        120,
-            "batch":      80,
-            "device":     80,
-            "status":     60,
+
+        col_config = {
+            "check":    ("☑", 30),
+            "order_no": ("PO", 100),
+            "brand":    ("牌号", 160),
+            "qty":      ("数量", 50),
+            "box_no":   ("箱号", 110),
+            "hub":      ("Hub", 80),
+            "status":   ("状态", 60),
         }
         for col in columns:
-            self.alloc_tree.heading(col, text=col_names[col])
-            self.alloc_tree.column(col, width=col_widths[col], minwidth=40, anchor="center")
+            title, width = col_config[col]
+            self.alloc_tree.heading(col, text=title)
+            self.alloc_tree.column(col, width=width, minwidth=30, anchor="center")
 
-        # 滚动条
+        # 标签样式
+        self.alloc_tree.tag_configure("new_row", background=Theme.INFO_BG)
+        self.alloc_tree.tag_configure("pending", foreground=Theme.WARNING)
+        self.alloc_tree.tag_configure("allocated", foreground=Theme.SUCCESS)
+        self.alloc_tree.tag_configure("assigned", foreground=Theme.PRIMARY)
+        self.alloc_tree.tag_configure("no_stock", foreground=Theme.ERROR)
+
         tree_scroll_y = ttk.Scrollbar(table_card, command=self.alloc_tree.yview)
-        tree_scroll_x = ttk.Scrollbar(table_card, orient="horizontal", command=self.alloc_tree.xview)
-        self.alloc_tree.configure(yscrollcommand=tree_scroll_y.set, xscrollcommand=tree_scroll_x.set)
-
+        self.alloc_tree.configure(yscrollcommand=tree_scroll_y.set)
         tree_scroll_y.pack(side="right", fill="y", padx=(0, 4), pady=(0, 8))
-        tree_scroll_x.pack(side="bottom", fill="x", padx=(4, 4), pady=(0, 4))
         self.alloc_tree.pack(fill="both", expand=True, padx=(4, 0), pady=(0, 4))
 
-        # 日志区
-        log_card = tk.Frame(page, bg=Theme.BG_CARD,
-                            highlightbackground=Theme.BORDER, highlightthickness=1)
-        log_card.pack(fill="x", padx=28, pady=(0, 16))
+        # ── 7. 分页栏 ──
+        page_bar = tk.Frame(page, bg=Theme.BG_PAGE)
+        page_bar.pack(fill="x", padx=28, pady=(0, 8))
 
-        log_header = tk.Frame(log_card, bg=Theme.BG_CARD)
-        log_header.pack(fill="x", padx=16, pady=(10, 4))
-        tk.Label(log_header, text="操作记录",
-                 font=("Microsoft YaHei UI", 10, "bold"),
-                 fg=Theme.TEXT_PRIMARY, bg=Theme.BG_CARD).pack(side="left")
+        self._alloc_page_label = tk.Label(page_bar, text="共 0 条",
+                                            font=("Microsoft YaHei UI", 9),
+                                            fg=Theme.TEXT_SECONDARY, bg=Theme.BG_PAGE)
+        self._alloc_page_label.pack(side="left")
 
-        self.alloc_log_text = tk.Text(
-            log_card, height=6, state="disabled",
-            font=("Consolas", 9), wrap="word",
-            bg="#FAFBFC", fg=Theme.TEXT_PRIMARY,
-            borderwidth=0, highlightthickness=0,
-            padx=12, pady=8
-        )
-        log_scroll = ttk.Scrollbar(log_card, command=self.alloc_log_text.yview)
-        self.alloc_log_text.configure(yscrollcommand=log_scroll.set)
-        log_scroll.pack(side="right", fill="y", padx=(0, 4), pady=(0, 8))
-        self.alloc_log_text.pack(fill="x", padx=(12, 0), pady=(0, 8))
+        ttk.Button(page_bar, text="◀ 上一页", style="Secondary.TButton",
+                    command=self._alloc_prev_page).pack(side="right", padx=(4, 0))
+        ttk.Button(page_bar, text="下一页 ▶", style="Secondary.TButton",
+                    command=self._alloc_next_page).pack(side="right")
 
-        self.alloc_log_text.tag_configure("red",    foreground=Theme.ERROR)
-        self.alloc_log_text.tag_configure("green",  foreground=Theme.SUCCESS)
-        self.alloc_log_text.tag_configure("warn",   foreground=Theme.WARNING)
-        self.alloc_log_text.tag_configure("header", foreground=Theme.TEXT_SECONDARY)
+        # ── 8. 底部按钮栏 ──
+        bottom_bar = tk.Frame(page, bg=Theme.BG_PAGE)
+        bottom_bar.pack(fill="x", padx=28, pady=(0, 16))
+
+        self._btn_export = ttk.Button(bottom_bar, text="导出配箱清单",
+                                       style="Primary.TButton",
+                                       command=self._alloc_export)
+        self._btn_export.pack(side="left", padx=(0, 12))
+        self._btn_export.state(["disabled"])
+
+        self._btn_send_order = ttk.Button(bottom_bar, text="改单邮件(0)",
+                                            style="Primary.TButton",
+                                            command=self._alloc_send_order_email)
+        self._btn_send_order.pack(side="left", padx=(0, 12))
+        self._btn_send_order.state(["disabled"])
+
+        self._btn_send_ship = ttk.Button(bottom_bar, text="发货通知(0)",
+                                           style="Primary.TButton",
+                                           command=self._alloc_send_ship_notify)
+        self._btn_send_ship.pack(side="left")
+        self._btn_send_ship.state(["disabled"])
 
         self.pages["allocation"] = page
 
     # ════════════════════════════════════════════════════
-    #  配箱工具 - 数据加载
+    #  配箱工具 - 状态管理
+    # ════════════════════════════════════════════════════
+
+    def _set_alloc_state(self, state):
+        """更新配箱页面状态：idle / loading / done / error"""
+        self._alloc_state = state
+
+        if state == "loading":
+            self._alloc_status_card.configure(highlightbackground=Theme.PRIMARY)
+            self._alloc_status_icon.config(text="⏳", fg=Theme.PRIMARY)
+            self._alloc_status_text.config(text="配箱中...", fg=Theme.PRIMARY)
+            self._alloc_status_progress.pack(side="left", padx=(12, 0))
+            self._alloc_status_progress.start(10)
+            self._step1_label.config(fg=Theme.PRIMARY)
+            # 禁用操作按钮
+            for btn in [self._btn_import_erp, self._btn_import_asn,
+                        self._btn_assign_box, self._btn_assign_di,
+                        self._btn_clear_assign]:
+                btn.state(["disabled"])
+
+        elif state == "done":
+            self._alloc_status_progress.stop()
+            self._alloc_status_progress.pack_forget()
+            self._alloc_status_card.configure(highlightbackground=Theme.SUCCESS)
+            self._alloc_status_icon.config(text="✅", fg=Theme.SUCCESS)
+            self._step1_label.config(fg=Theme.SUCCESS)
+
+            # 统计
+            total = len(self._alloc_orders)
+            new_count = len(self._alloc_new_rows)
+            alloc_count = sum(1 for o in self._alloc_orders if o["status"] == "已配")
+            pending_count = sum(1 for o in self._alloc_orders if o["status"] == "待配")
+            self._alloc_status_text.config(
+                text=f"配箱完成  新增{new_count}单 · 已配{alloc_count} · 待配{pending_count}",
+                fg=Theme.SUCCESS)
+
+            # 启用按钮
+            for btn in [self._btn_import_erp, self._btn_import_asn,
+                        self._btn_assign_box, self._btn_assign_di,
+                        self._btn_clear_assign]:
+                btn.state(["!disabled"])
+            self._btn_export.state(["!disabled"])
+            self._btn_send_order.state(["!disabled"])
+            self._btn_send_order.config(text=f"改单邮件({alloc_count})")
+
+            if self._alloc_asn_imported:
+                self._step2_label.config(fg=Theme.SUCCESS)
+                self._btn_send_ship.state(["!disabled"])
+                self._btn_send_ship.config(text=f"发货通知({alloc_count})")
+
+        elif state == "error":
+            self._alloc_status_progress.stop()
+            self._alloc_status_progress.pack_forget()
+            self._alloc_status_card.configure(highlightbackground=Theme.ERROR)
+            self._alloc_status_icon.config(text="❌", fg=Theme.ERROR)
+            self._alloc_status_text.config(text="加载失败", fg=Theme.ERROR)
+
+            for btn in [self._btn_import_erp, self._btn_import_asn,
+                        self._btn_assign_box, self._btn_assign_di,
+                        self._btn_clear_assign]:
+                btn.state(["!disabled"])
+
+        elif state == "idle":
+            self._alloc_status_progress.stop()
+            self._alloc_status_progress.pack_forget()
+            self._alloc_status_card.configure(highlightbackground=Theme.BORDER)
+            self._alloc_status_icon.config(text="", fg=Theme.TEXT_SECONDARY)
+            self._alloc_status_text.config(text="等待导入", fg=Theme.TEXT_SECONDARY)
+
+    def _set_alloc_filter(self, filter_name):
+        """设置筛选条件"""
+        self._alloc_filter = filter_name
+        self._alloc_page = 0
+        self._refresh_alloc_tree()
+
+    # ════════════════════════════════════════════════════
+    #  配箱工具 - 数据加载（后台线程）
     # ════════════════════════════════════════════════════
 
     def _load_allocation_data(self):
-        """加载配箱数据到表格"""
-        file_path = self.alloc_file_var.get()
+        """后台加载配箱数据"""
+        file_path = self._alloc_file_var.get() if hasattr(self, '_alloc_file_var') else ""
         if not file_path or not os.path.exists(file_path):
             return
 
+        self._set_alloc_state("loading")
+        threading.Thread(target=self._do_load_allocation, daemon=True).start()
+
+    def _do_load_allocation(self):
+        """后台线程：加载配箱数据"""
         try:
             from allocation_module import load_allocation_workbook, get_current_orders, get_box_summary
 
-            wb = load_allocation_workbook(file_path)
-            self._alloc_orders = get_current_orders(wb)
-            self._alloc_boxes  = get_box_summary(wb)
+            path = self._alloc_file_var.get()
+            wb = load_allocation_workbook(path)
+            orders = get_current_orders(wb)
+            boxes = get_box_summary(wb)
             wb.close()
 
-            # 更新表格
-            self._refresh_alloc_tree()
-
-            self._alloc_log(f"✅ 数据加载成功：{len(self._alloc_orders)} 个订单，{len(self._alloc_boxes)} 个可用箱")
-
+            self.root.after(0, self._on_allocation_loaded, orders, boxes)
         except Exception as e:
-            self._alloc_log(f"❌ 加载失败：{e}", "red")
-            import traceback
-            self._alloc_log(traceback.format_exc(), "red")
+            self.root.after(0, self._on_allocation_error, str(e))
+
+    def _on_allocation_loaded(self, orders, boxes):
+        """主线程：数据加载完成回调"""
+        self._alloc_orders = orders
+        self._alloc_boxes = boxes
+        self._alloc_page = 0
+        self._set_alloc_state("done")
+        self._refresh_alloc_tree()
+
+    def _on_allocation_error(self, error_msg):
+        """主线程：数据加载失败回调"""
+        self._set_alloc_state("error")
+        messagebox.showerror("加载失败", f"配箱数据加载失败：\n{error_msg}")
+
+    # ════════════════════════════════════════════════════
+    #  配箱工具 - 分页 & 表格刷新
+    # ════════════════════════════════════════════════════
 
     def _refresh_alloc_tree(self):
-        """刷新配箱表格"""
+        """刷新配箱表格（带分页和筛选）"""
         # 清空
         for item in self.alloc_tree.get_children():
             self.alloc_tree.delete(item)
 
-        if not hasattr(self, "_alloc_orders"):
+        if not self._alloc_orders:
+            self._alloc_page_label.config(text="共 0 条")
             return
 
-        # 填入数据
+        # 筛选
+        search = self._alloc_search_var.get().strip().lower() if hasattr(self, '_alloc_search_var') else ""
+        filtered = []
         for order in self._alloc_orders:
-            status_color = {
-                "待配": Theme.WARNING,
-                "已配": Theme.SUCCESS,
-                "指定": Theme.PRIMARY,
-                "无库存": Theme.ERROR,
-            }.get(order["status"], Theme.TEXT_PRIMARY)
+            # 按状态筛选
+            if self._alloc_filter != "全部":
+                status_map = {"已配": "已配", "待配": "待配", "指定": "指定"}
+                if order["status"] != status_map.get(self._alloc_filter, ""):
+                    continue
+            # 按关键词搜索
+            if search:
+                searchable = f"{order['order_no']} {order['brand']} {order['box_no'] or ''} {order['di']} {order['sales_org']}"
+                if search not in searchable.lower():
+                    continue
+            filtered.append(order)
 
-            item_id = self.alloc_tree.insert("", "end", values=(
+        # 分页
+        total = len(filtered)
+        total_pages = max(1, (total + self._alloc_page_size - 1) // self._alloc_page_size)
+        if self._alloc_page >= total_pages:
+            self._alloc_page = max(0, total_pages - 1)
+
+        start = self._alloc_page * self._alloc_page_size
+        end = min(start + self._alloc_page_size, total)
+        page_orders = filtered[start:end]
+
+        # 填入数据
+        for order in page_orders:
+            is_new = order["row"] in self._alloc_new_rows
+            tag = "new_row" if is_new else ""
+            # 状态着色 tag
+            status_tag = {
+                "已配": "allocated",
+                "待配": "pending",
+                "指定": "assigned",
+                "无库存": "no_stock",
+            }.get(order["status"], "")
+
+            tags = tuple(t for t in (tag, status_tag) if t)
+
+            self.alloc_tree.insert("", "end", values=(
+                "☑" if is_new else "☐",
                 order["order_no"],
-                order["sales_org"],
                 order["brand"],
                 order["qty"],
                 order["box_no"] or "",
-                order["di"],
-                order["batch"],
-                order["device"],
+                order["sales_org"],
                 order["status"],
-            ))
-            # 状态列着色
-            self.alloc_tree.set(item_id, "status", order["status"])
-            # 用tag实现行着色（简化：只改状态文字颜色）
+            ), tags=tags)
 
-        # 更新统计
-        self._update_alloc_stats()
+        # 更新分页标签
+        self._alloc_page_label.config(text=f"共 {total} 条，第 {self._alloc_page + 1}/{total_pages} 页")
 
-    def _update_alloc_stats(self):
-        if not hasattr(self, "_alloc_orders"):
-            return
-        orders = self._alloc_orders
-        counts = {
-            "pending":   sum(1 for o in orders if o["status"] == "待配"),
-            "allocated": sum(1 for o in orders if o["status"] == "已配"),
-            "assigned":  sum(1 for o in orders if o["status"] == "指定"),
-            "no_stock":  sum(1 for o in orders if o["status"] == "无库存"),
-            "boxes":     len(getattr(self, "_alloc_boxes", [])),
-        }
-        for key, lbl in self.alloc_stat_labels.items():
-            lbl.config(text=f"● {lbl.cget('text').split('：')[0]}：{counts.get(key, 0)}")
+    def _alloc_next_page(self):
+        self._alloc_page += 1
+        self._refresh_alloc_tree()
 
-    def _alloc_log(self, msg, tag=None):
-        """写操作日志"""
-        self.alloc_log_text.config(state="normal")
-        if tag:
-            self.alloc_log_text.insert("end", msg + "\n", tag)
-        else:
-            self.alloc_log_text.insert("end", msg + "\n")
-        self.alloc_log_text.see("end")
-        self.alloc_log_text.config(state="disabled")
+    def _alloc_prev_page(self):
+        self._alloc_page = max(0, self._alloc_page - 1)
+        self._refresh_alloc_tree()
 
     # ════════════════════════════════════════════════════
     #  配箱工具 - 操作功能
@@ -1367,7 +1517,7 @@ class EmailToolApp:
 
     def _alloc_import_erp(self):
         """导入ERP订单"""
-        if not self.alloc_file_var.get() or not os.path.exists(self.alloc_file_var.get()):
+        if not self._alloc_file_var.get() or not os.path.exists(self._alloc_file_var.get()):
             messagebox.showwarning("提示", "请先选择配箱表文件")
             return
 
@@ -1379,20 +1529,18 @@ class EmailToolApp:
 
         try:
             from allocation_module import import_erp_orders
-            count, err = import_erp_orders(erp_path, self.alloc_file_var.get())
+            count, err = import_erp_orders(erp_path, self._alloc_file_var.get())
             if err:
-                self._alloc_log(f"❌ 导入失败：{err}", "red")
                 messagebox.showerror("导入失败", err)
             else:
-                self._alloc_log(f"✅ 成功导入 {count} 个订单", "green")
                 messagebox.showinfo("导入成功", f"成功导入 {count} 个订单")
                 self._load_allocation_data()
         except Exception as e:
-            self._alloc_log(f"❌ 导入异常：{e}", "red")
+            messagebox.showerror("导入异常", str(e))
 
     def _alloc_import_asn(self):
         """导入ASN数据"""
-        if not self.alloc_file_var.get() or not os.path.exists(self.alloc_file_var.get()):
+        if not self._alloc_file_var.get() or not os.path.exists(self._alloc_file_var.get()):
             messagebox.showwarning("提示", "请先选择配箱表文件")
             return
 
@@ -1404,14 +1552,15 @@ class EmailToolApp:
 
         try:
             from allocation_module import import_asn
-            ok, err = import_asn(asn_path, self.alloc_file_var.get())
+            ok, err = import_asn(asn_path, self._alloc_file_var.get())
             if err:
-                self._alloc_log(f"❌ ASN导入失败：{err}", "red")
+                messagebox.showerror("ASN导入失败", err)
             else:
-                self._alloc_log(f"✅ ASN数据导入成功", "green")
+                self._alloc_asn_imported = True
+                self._set_alloc_state(self._alloc_state)  # 刷新按钮状态
                 self._load_allocation_data()
         except Exception as e:
-            self._alloc_log(f"❌ ASN导入异常：{e}", "red")
+            messagebox.showerror("ASN导入异常", str(e))
 
     def _alloc_assign_box(self):
         """指定箱号"""
@@ -1420,24 +1569,21 @@ class EmailToolApp:
             messagebox.showwarning("提示", "请先选择要指定箱号的订单行")
             return
 
-        if not hasattr(self, "_alloc_boxes") or not self._alloc_boxes:
+        if not self._alloc_boxes:
             messagebox.showwarning("提示", "没有可用箱子，请先加载数据")
             return
 
-        # 获取选中订单的信息
         selected_orders = []
         for item_id in selected:
             vals = self.alloc_tree.item(item_id, "values")
             selected_orders.append({
                 "item_id": item_id,
-                "order_no": vals[0],
-                "sales_org": vals[1],
+                "order_no": vals[1],
+                "sales_org": vals[5],
                 "brand": vals[2],
                 "qty": vals[3],
             })
 
-        # 构建匹配的箱号列表
-        # 优先显示同牌号+同Hub的箱子
         if selected_orders:
             match_brand = selected_orders[0]["brand"]
             match_hub = selected_orders[0]["sales_org"]
@@ -1461,7 +1607,6 @@ class EmailToolApp:
         dlg.transient(self.root)
         dlg.grab_set()
 
-        # 已选订单信息
         info_frame = tk.Frame(dlg, bg=Theme.BG_CARD)
         info_frame.pack(fill="x", padx=16, pady=12)
         tk.Label(info_frame, text=f"已选 {len(selected_orders)} 个订单",
@@ -1474,7 +1619,6 @@ class EmailToolApp:
             tk.Label(info_frame, text=f"  ... 等{len(selected_orders)}个",
                      font=("Microsoft YaHei UI", 9), bg=Theme.BG_CARD, fg=Theme.TEXT_SECONDARY).pack(anchor="w", padx=12)
 
-        # 匹配箱子列表
         tk.Label(dlg, text=f"匹配的箱子（{len(matched_boxes)}个）",
                  font=("Microsoft YaHei UI", 9, "bold"),
                  bg=Theme.BG_PAGE, fg=Theme.SUCCESS).pack(anchor="w", padx=20, pady=(8,2))
@@ -1485,7 +1629,6 @@ class EmailToolApp:
             listbox.insert("end", info)
         listbox.pack(fill="both", expand=True, padx=20, pady=(0,8))
 
-        # 其他箱子
         tk.Label(dlg, text=f"其他箱子（{len(other_boxes)}个）",
                  font=("Microsoft YaHei UI", 9),
                  bg=Theme.BG_PAGE, fg=Theme.TEXT_SECONDARY).pack(anchor="w", padx=20, pady=(0,2))
@@ -1496,14 +1639,12 @@ class EmailToolApp:
             other_listbox.insert("end", info)
         other_listbox.pack(fill="x", padx=20, pady=(0,8))
 
-        # 按钮
         btn_frame = tk.Frame(dlg, bg=Theme.BG_PAGE)
         btn_frame.pack(fill="x", padx=20, pady=(0,16))
 
         def _confirm():
             sel_idx = listbox.curselection()
             other_idx = other_listbox.curselection()
-
             if sel_idx:
                 box = matched_boxes[sel_idx[0]][0]
             elif other_idx:
@@ -1511,8 +1652,6 @@ class EmailToolApp:
             else:
                 messagebox.showwarning("提示", "请选择一个箱子")
                 return
-
-            # 写入J列
             self._do_assign_box(selected_orders, box)
             dlg.destroy()
 
@@ -1524,15 +1663,13 @@ class EmailToolApp:
     def _do_assign_box(self, selected_orders, box):
         """执行指定箱号写入"""
         try:
-            from allocation_module import load_allocation_workbook
+            from allocation_module import load_allocation_workbook, refresh_calculation
             from openpyxl import load_workbook as load_wb_rw
 
-            alloc_path = self.alloc_file_var.get()
-            # 用公式版本打开（可写入）
+            alloc_path = self._alloc_file_var.get()
             wb = load_wb_rw(alloc_path)
             ws = wb["配箱公式"]
 
-            # 找到选中订单的行号并写入J列
             for o in selected_orders:
                 order_no = o["order_no"]
                 for row in range(2, ws.max_row + 1):
@@ -1544,11 +1681,11 @@ class EmailToolApp:
             wb.save(alloc_path)
             wb.close()
 
-            self._alloc_log(f"✅ 已指定箱号 {box['box_no']}", "green")
+            # 尝试重算
+            refresh_calculation(alloc_path)
             self._load_allocation_data()
 
         except Exception as e:
-            self._alloc_log(f"❌ 指定箱号失败：{e}", "red")
             messagebox.showerror("错误", str(e))
 
     def _alloc_assign_di(self):
@@ -1558,11 +1695,10 @@ class EmailToolApp:
             messagebox.showwarning("提示", "请先选择要指定DI的订单行")
             return
 
-        if not hasattr(self, "_alloc_boxes") or not self._alloc_boxes:
+        if not self._alloc_boxes:
             messagebox.showwarning("提示", "没有可用箱子，请先加载数据")
             return
 
-        # 收集所有可用DI
         di_map = {}
         for b in self._alloc_boxes:
             if b["di"] and b["di"] not in di_map:
@@ -1578,7 +1714,6 @@ class EmailToolApp:
 
         di_list = sorted(di_map.values(), key=lambda x: x["eta"] or datetime(2099,1,1))
 
-        # 弹窗选择DI
         dlg = tk.Toplevel(self.root)
         dlg.title("指定DI")
         dlg.geometry("600x400")
@@ -1610,19 +1745,13 @@ class EmailToolApp:
             if not sel_idx:
                 messagebox.showwarning("提示", "请选择一个DI")
                 return
-
             di_info = di_list[sel_idx[0]]
             di = di_info["di"]
-
-            # 找该DI下的箱子，按ETA排序
             di_boxes = [b for b in self._alloc_boxes if b["di"] == di]
             di_boxes.sort(key=lambda x: x.get("eta") or datetime(2099,1,1))
-
             if not di_boxes:
                 messagebox.showwarning("提示", f"DI {di} 下没有可用箱子")
                 return
-
-            # 按序分配
             self._do_assign_di(selected_orders, di_boxes)
             dlg.destroy()
 
@@ -1634,15 +1763,16 @@ class EmailToolApp:
     def _do_assign_di(self, selected_orders, di_boxes):
         """执行指定DI写入"""
         try:
+            from allocation_module import refresh_calculation
             from openpyxl import load_workbook as load_wb_rw
 
-            alloc_path = self.alloc_file_var.get()
+            alloc_path = self._alloc_file_var.get()
             wb = load_wb_rw(alloc_path)
             ws = wb["配箱公式"]
 
             box_idx = 0
             for item_vals in selected_orders:
-                order_no = item_vals[0]
+                order_no = item_vals[1]  # 第2列是PO
                 for row in range(2, ws.max_row + 1):
                     z_val = ws.cell(row=row, column=26).value
                     if z_val and str(int(z_val) if isinstance(z_val, (int,float)) else z_val) == order_no:
@@ -1654,11 +1784,11 @@ class EmailToolApp:
             wb.save(alloc_path)
             wb.close()
 
-            self._alloc_log(f"✅ 已指定DI，分配了 {box_idx} 个箱子", "green")
+            refresh_calculation(alloc_path)
             self._load_allocation_data()
 
         except Exception as e:
-            self._alloc_log(f"❌ 指定DI失败：{e}", "red")
+            messagebox.showerror("错误", str(e))
 
     def _alloc_clear_assign(self):
         """清除指定（恢复J列公式）"""
@@ -1671,20 +1801,20 @@ class EmailToolApp:
             return
 
         try:
+            from allocation_module import refresh_calculation
             from openpyxl import load_workbook as load_wb_rw
 
-            alloc_path = self.alloc_file_var.get()
+            alloc_path = self._alloc_file_var.get()
             wb = load_wb_rw(alloc_path)
             ws = wb["配箱公式"]
 
             cleared = 0
             for item_id in selected:
                 vals = self.alloc_tree.item(item_id, "values")
-                order_no = vals[0]
+                order_no = vals[1]  # PO列
                 for row in range(2, ws.max_row + 1):
                     z_val = ws.cell(row=row, column=26).value
                     if z_val and str(int(z_val) if isinstance(z_val, (int,float)) else z_val) == order_no:
-                        # 清空J列（设为None，让公式重新计算）
                         ws.cell(row=row, column=10).value = None
                         cleared += 1
                         break
@@ -1692,15 +1822,15 @@ class EmailToolApp:
             wb.save(alloc_path)
             wb.close()
 
-            self._alloc_log(f"✅ 已清除 {cleared} 个订单的指定箱号", "green")
+            refresh_calculation(alloc_path)
             self._load_allocation_data()
 
         except Exception as e:
-            self._alloc_log(f"❌ 清除指定失败：{e}", "red")
+            messagebox.showerror("错误", str(e))
 
     def _alloc_export(self):
         """导出配箱清单"""
-        if not hasattr(self, "_alloc_orders"):
+        if not self._alloc_orders:
             messagebox.showwarning("提示", "请先加载数据")
             return
 
@@ -1715,19 +1845,164 @@ class EmailToolApp:
         try:
             from allocation_module import export_allocation_list
             export_allocation_list(self._alloc_orders, output_path)
-            self._alloc_log(f"✅ 配箱清单已导出：{os.path.basename(output_path)}", "green")
             messagebox.showinfo("导出成功", f"配箱清单已保存到：\n{output_path}")
         except Exception as e:
-            self._alloc_log(f"❌ 导出失败：{e}", "red")
+            messagebox.showerror("导出失败", str(e))
 
-    def _alloc_send_email(self):
-        """一键发邮件（改单邮件+发货通知）"""
-        self._alloc_log("📧 邮件功能：请切换到「改单邮件」和「发货通知」页面发送")
-        messagebox.showinfo("提示",
-            "邮件发送功能请使用左侧导航的：\n\n"
-            "📋 改单邮件 — 批量发送改单邮件+COA附件\n"
-            "🚚 发货通知 — 发送发货通知邮件\n\n"
-            "配箱结果会自动同步到邮件数据。")
+    def _alloc_send_order_email(self):
+        """改单邮件 - 复用 v2.1 逻辑"""
+        # 选择改单邮件 Excel 文件
+        excel_path = filedialog.askopenfilename(
+            title="选择改单邮件 Excel 文件",
+            filetypes=[("Excel 文件", "*.xlsx *.xls")])
+        if not excel_path:
+            return
+
+        try:
+            email_data, order_batch = read_email_data(excel_path)
+        except Exception as e:
+            messagebox.showerror("读取失败", f"无法读取邮件数据：\n{e}")
+            return
+
+        if not email_data:
+            messagebox.showinfo("提示", "邮件数据为空")
+            return
+
+        # 确认对话框
+        preview_lines = [
+            ("收件人：" + self.order_recipients.get(), None),
+            ("邮箱账号：" + self.order_email_user.get(), None),
+            ("", None),
+            ("── 待发送改单邮件 ──", "bold"),
+        ]
+        for item in email_data:
+            preview_lines.append((f"PO {item['订单号']}  {item['邮件标题']}", "green"))
+
+        preview_lines.append(("", None))
+        preview_lines.append((f"共 {len(email_data)} 封邮件将被发送", "bold"))
+
+        if not self._show_confirm_dialog("改单邮件 · 发送确认", preview_lines):
+            return
+
+        # 发送
+        self._running = True
+        threading.Thread(target=self._do_alloc_order_email,
+                         args=(email_data, order_batch, excel_path),
+                         daemon=True).start()
+
+    def _do_alloc_order_email(self, email_data, order_batch, excel_path):
+        """后台线程：发送改单邮件"""
+        smtp_server = self.order_smtp_server.get()
+        smtp_port   = self.order_smtp_port.get()
+        username    = self.order_email_user.get()
+        password    = self.order_email_pass.get()
+        recipients  = self.order_recipients.get()
+        coa_dir     = self.order_coa_dir.get()
+        output_dir  = self.order_output_dir.get()
+
+        if not output_dir:
+            output_dir = os.path.join(os.path.dirname(excel_path), "output")
+        os.makedirs(output_dir, exist_ok=True)
+
+        total = len(email_data)
+        smtp_conn = None
+
+        try:
+            for i, item in enumerate(email_data, 1):
+                order_no = item["订单号"]
+                subject = item["邮件标题"]
+                body = item["邮件正文"]
+
+                # COA 打包
+                coa_files = find_coa_files(order_no, coa_dir, order_batch) if coa_dir else []
+                attachments = []
+                if coa_files:
+                    zip_path = os.path.join(output_dir, f"{order_no}_coa.zip")
+                    zip_files(coa_files, zip_path)
+                    attachments.append(zip_path)
+                    subject = f"{subject}"
+                else:
+                    subject = f"【COA待确认】{subject}"
+
+                try:
+                    smtp_conn = send_email(
+                        smtp_server, smtp_port, username, password,
+                        recipients, subject, body, attachments,
+                        server=smtp_conn)
+                except Exception as e:
+                    smtp_conn = None
+                    import time
+                    time.sleep(2)
+                    try:
+                        smtp_conn = send_email(
+                            smtp_server, smtp_port, username, password,
+                            recipients, subject, body, attachments)
+                    except Exception as e2:
+                        pass
+
+        finally:
+            if smtp_conn:
+                try:
+                    smtp_conn.quit()
+                except Exception:
+                    pass
+            self._running = False
+            self.root.after(0, lambda: messagebox.showinfo("完成", f"改单邮件发送完毕，共 {total} 封"))
+
+    def _alloc_send_ship_notify(self):
+        """发货通知 - 复用 v2.1 逻辑"""
+        search_dir = self.ship_search_dir.get()
+        keyword    = self.ship_keyword.get().strip()
+        subject_pre = self.ship_subject_pre.get().strip()
+        body       = self.ship_email_body.get() or "您好，请查收附件。"
+        smtp_server = self.ship_smtp_server.get()
+        smtp_port   = self.ship_smtp_port.get()
+        username    = self.ship_email_user.get()
+        password    = self.ship_email_pass.get()
+        recipients  = self.ship_recipients.get()
+
+        if not search_dir or not keyword:
+            messagebox.showwarning("提示", "请先在设置中配置发货通知的搜索文件夹和文件特征值")
+            return
+
+        if not username or not password or not recipients:
+            messagebox.showwarning("提示", "请先在设置中配置发货通知的邮箱信息")
+            return
+
+        # 查找文件
+        found_file = find_newest_file_by_keyword(search_dir, keyword)
+        if not found_file:
+            messagebox.showerror("未找到文件", f"在文件夹中未找到包含「{keyword}」的文件")
+            return
+
+        # 确认
+        now = datetime.now()
+        dt_str = now.strftime("%Y%m%d-%H:%M")
+        subject = f"{subject_pre} {dt_str}"
+
+        preview_lines = [
+            ("收件人：" + recipients, None),
+            ("邮箱账号：" + username, None),
+            ("", None),
+            ("── 发货通知预览 ──", "bold"),
+            (f"邮件标题：{subject}", None),
+            (f"附件文件：{os.path.basename(found_file)}", "green"),
+        ]
+
+        if not self._show_confirm_dialog("发货通知 · 发送确认", preview_lines):
+            return
+
+        # 发送
+        try:
+            smtp_conn = send_email(smtp_server, smtp_port, username, password,
+                                   recipients, subject, body, [found_file])
+            try:
+                smtp_conn.quit()
+            except Exception:
+                pass
+            messagebox.showinfo("发送成功", "发货通知邮件已发送")
+        except Exception as e:
+            messagebox.showerror("发送失败", str(e))
 
     # ───── 文件选择回调 ─────
 
